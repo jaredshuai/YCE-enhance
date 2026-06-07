@@ -79,10 +79,10 @@ node ./scripts/yce.js "优化这个任务描述" \
 | `YCE_YOUWEN_TOKEN` | 兑换码 / Token，前往 [a.aigy.de](https://a.aigy.de) 获取 |
 | `YCE_YOUWEN_API_URL` | 优问增强后端，默认 `https://a.aigy.de` |
 | `YCE_RELAY_URL` | 检索 relay 地址，默认 `https://yce.aigy.de` |
-| `YCE_RELAY_TOKEN` | 检索 relay 鉴权；默认同 `YCE_YOUWEN_TOKEN` |
+| `YCE_RELAY_TOKEN` | 检索 relay 鉴权；作为 `Authorization: Bearer` 请求 `/yce/lease-key` |
 | `YCE_YOUWEN_SCRIPT` | 增强脚本路径，默认 `./scripts/youwen.js` |
 | `YCE_ENGINE_SCRIPT` | 检索引擎路径，默认 `./vendor/yce-engine/yce-engine.mjs` |
-| `YCE_MODE` | 默认模式，通常 `auto` |
+| `YCE_DEFAULT_MODE` | 默认模式，通常 `auto` 或 `search` |
 | `YCE_LOCAL_FALLBACK` | 设为 `true` 时远端失败才启用本地 fast fallback（默认关闭） |
 
 也可直接写入兑换码与本地检索选项：
@@ -99,6 +99,56 @@ bash ./install.sh --setup --youwen-token <your-code> --local-fallback true
 bash ./install.sh --check
 bash ./install.sh --sync
 bash ./install.sh --sync-env
+```
+
+## MCP Server
+
+仓库内置一个 stdio MCP server，可直接暴露 `search_context` 工具给 Codex/Claude 等 MCP 客户端：
+
+```bash
+node ./scripts/yce-mcp.js
+```
+
+工具参数与 ace-tool 风格保持一致：
+
+| 参数 | 说明 |
+|------|------|
+| `project_root_path` | 要检索的项目根目录，建议传绝对路径 |
+| `query` | 自然语言代码检索问题 |
+| `max_results` | 可选，覆盖 `YCE_ENGINE_MAX_RESULTS` |
+| `max_turns` | 可选，覆盖 `YCE_ENGINE_MAX_TURNS` |
+| `timeout_ms` | 可选，覆盖 `YCE_TIMEOUT_SEARCH_MS` |
+
+Codex 配置示例：
+
+```toml
+[mcp_servers.yce]
+command = "npx"
+args = ["-y", "--package", "@jared1204/yce-enhance", "yce-mcp"]
+env_vars = ["YCE_RELAY_TOKEN"]
+```
+
+`YCE_RELAY_TOKEN` 建议放在用户环境变量或 MCP 客户端的环境转发配置里，不要提交到仓库。
+
+## npm 发布
+
+npm 包名为 `@jared1204/yce-enhance`。仓库内置 GitHub Actions 发布流程：
+
+- tag `v*` 会触发 `.github/workflows/publish.yml`
+- workflow 会执行 `npm ci`、`npm test`、`npm pack --dry-run`
+- 发布命令为 `npm publish --access public --provenance`
+
+首次发布 scoped 包时，如果 npm 还没有 Trusted Publisher 绑定，需要先手动发布一次：
+
+```bash
+npm publish --access public
+```
+
+之后在 npm 包设置中绑定 GitHub Actions Trusted Publisher，再用 tag 自动发布：
+
+```bash
+git tag v1.6.7
+git push origin v1.6.7
 ```
 
 ## 下载 Release

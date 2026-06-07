@@ -1,0 +1,37 @@
+{
+  "name": "@jared1204/yce-enhance",
+  "version": "1.6.6",
+  "description": "YCE prompt enhancement and semantic code search tools.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jaredshuai/YCE-enhance.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "yce": "scripts/yce.js",
+    "yce-mcp": "scripts/yce-mcp.js"
+  },
+  "files": [
+    "README.md",
+    "SKILL.md",
+    "scripts/",
+    "vendor/yce-engine/yce-engine.mjs",
+    "vendor/yce-engine/package.json",
+    "vendor/yce-engine/LICENSE",
+    "vendor/yce-engine/NOTICE.md",
+    "vendor/yce-engine/lib/"
+  ],
+  "scripts": {
+    "test": "node --test scripts/lib/mcpServer.test.js && node --check scripts/yce-mcp.js && node --check scripts/lib/mcpServer.js"
+  },
+  "dependencies": {
+    "@vscode/ripgrep": "^1.15.9",
+    "tree-node-cli": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

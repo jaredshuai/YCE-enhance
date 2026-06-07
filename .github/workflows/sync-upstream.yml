@@ -1,0 +1,195 @@
+name: Sync upstream and publish npm package
+
+on:
+  schedule:
+    - cron: "37 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: sync-upstream-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24"
+  PACKAGE_NAME: "@jared1204/yce-enhance"
+  UPSTREAM_REPOSITORY: "xiamuwnagwang/YCE-enhance"
+
+jobs:
+  sync-and-publish:
+    if: github.repository == 'jaredshuai/YCE-enhance'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          set -euo pipefail
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git" 2>/dev/null || git remote set-url upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch origin main:refs/remotes/origin/main --tags
+          git fetch upstream main:refs/remotes/upstream/main --tags
+
+      - name: Resolve upstream release version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$(gh api "repos/${UPSTREAM_REPOSITORY}/releases/latest")"
+          tag="$(node -e 'const fs=require("node:fs"); const release=JSON.parse(fs.readFileSync(0,"utf8")); process.stdout.write(release.tag_name || "");' <<< "$release_json")"
+          version="${tag#v}"
+
+          if [[ -z "$tag" || "$tag" == "$version" ]]; then
+            echo "Latest upstream release tag must use the vX.Y.Z format; got: ${tag:-<empty>}" >&2
+            exit 1
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+[.][0-9]+[.][0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Latest upstream release tag does not contain a semver version: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Merge upstream main
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Fork already contains upstream/main."
+            exit 0
+          fi
+
+          git merge --no-ff --no-commit upstream/main
+
+      - name: Prepare npm package metadata
+        id: package
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const packageName = process.env.PACKAGE_NAME;
+          const version = process.env.RELEASE_VERSION;
+          if (!version) {
+            throw new Error("RELEASE_VERSION is required.");
+          }
+
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          pkg.name = packageName;
+          pkg.version = version;
+          pkg.description = pkg.description || "YCE prompt enhancement and semantic code search tools.";
+          pkg.license = pkg.license || "MIT";
+          pkg.repository = {
+            type: "git",
+            url: "git+https://github.com/jaredshuai/YCE-enhance.git"
+          };
+          pkg.publishConfig = {
+            ...(pkg.publishConfig || {}),
+            access: "public"
+          };
+          pkg.bin = {
+            ...(pkg.bin || {}),
+            yce: "scripts/yce.js",
+            "yce-mcp": "scripts/yce-mcp.js"
+          };
+          pkg.files = [
+            "README.md",
+            "SKILL.md",
+            "scripts/",
+            "vendor/yce-engine/yce-engine.mjs",
+            "vendor/yce-engine/package.json",
+            "vendor/yce-engine/LICENSE",
+            "vendor/yce-engine/NOTICE.md",
+            "vendor/yce-engine/lib/"
+          ];
+          pkg.scripts = {
+            ...(pkg.scripts || {}),
+            test: "node --test scripts/lib/mcpServer.test.js && node --check scripts/yce-mcp.js && node --check scripts/lib/mcpServer.js"
+          };
+          pkg.dependencies = {
+            ...(pkg.dependencies || {}),
+            "@vscode/ripgrep": pkg.dependencies?.["@vscode/ripgrep"] || "^1.15.9",
+            "tree-node-cli": pkg.dependencies?.["tree-node-cli"] || "^1.6.0"
+          };
+          pkg.engines = {
+            ...(pkg.engines || {}),
+            node: ">=18"
+          };
+          fs.writeFileSync("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+
+          if (fs.existsSync("package-lock.json")) {
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            lock.name = packageName;
+            lock.version = version;
+            if (lock.packages && lock.packages[""]) {
+              lock.packages[""].name = packageName;
+              lock.packages[""].version = version;
+            }
+            fs.writeFileSync("package-lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+          }
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `name=${packageName}\nversion=${version}\n`);
+          NODE
+          npm install --package-lock-only --ignore-scripts
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+
+      - name: Commit and push synced changes
+        run: |
+          set -euo pipefail
+          git add package.json package-lock.json
+
+          if [ -f .git/MERGE_HEAD ] || ! git diff --cached --quiet; then
+            git commit -m "Sync upstream and prepare npm package"
+            git push origin HEAD:main
+          else
+            echo "No fork changes to push."
+          fi
+
+      - name: Check npm version
+        id: registry
+        run: |
+          set -euo pipefail
+          if npm view "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }}" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }} is already published."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.package.outputs.name }}@${{ steps.package.outputs.version }} is not published yet."
+          fi
+
+      - name: Install dependencies
+        if: steps.registry.outputs.publish == 'true'
+        run: npm ci
+
+      - name: Test
+        if: steps.registry.outputs.publish == 'true'
+        run: npm test
+
+      - name: Check package contents
+        if: steps.registry.outputs.publish == 'true'
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        if: steps.registry.outputs.publish == 'true'
+        run: npm publish --access public --provenance

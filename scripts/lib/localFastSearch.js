@@ -433,10 +433,15 @@ function rrf(rankings) {
 function resolveRgPath() {
   if (cachedRgPath !== null) return cachedRgPath;
   try {
-    const ripgrep = require(path.join(ROOT_DIR, "vendor/yce-engine/node_modules/@vscode/ripgrep"));
+    const ripgrep = require("@vscode/ripgrep");
     cachedRgPath = ripgrep.rgPath || "rg";
   } catch {
-    cachedRgPath = "rg";
+    try {
+      const ripgrep = require(path.join(ROOT_DIR, "vendor/yce-engine/node_modules/@vscode/ripgrep"));
+      cachedRgPath = ripgrep.rgPath || "rg";
+    } catch {
+      cachedRgPath = "rg";
+    }
   }
   return cachedRgPath;
 }
